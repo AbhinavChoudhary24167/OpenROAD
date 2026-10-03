@@ -127,7 +127,7 @@ void RestitchChain(odb::dbScanChain* chain,
       net = odb::dbNet::create(block, last_so->getName().c_str());
       if (net == nullptr) {
         logger->error(
-            utl::DFT, 15, "Failed to create net for scan_opt restitching.");
+            utl::DFT, 20, "Failed to create net for scan_opt output.");
       }
       net->setSigType(odb::dbSigType::SCAN);
       last_so->connect(net);
@@ -420,6 +420,25 @@ void Dft::scanOpt()
 {
   odb::dbBlock* block = db_->getChip()->getBlock();
   odb::dbDft* db_dft = block->getDft();
+
+  // A functional output implicitly reused by stitching must not be moved.
+  // Require an explicitly configured scan output before changing chain tails.
+  size_t ordinal = 0;
+  for (odb::dbScanChain* chain : db_dft->getScanChains()) {
+    const auto output_name = fmt::format(
+        FMT_RUNTIME(dft_config_->getScanStitchConfig().getOutNamePattern()),
+        ordinal++);
+    if (auto* term = std::get_if<odb::dbBTerm*>(&chain->getScanOut());
+        term != nullptr && *term != nullptr
+        && (*term)->getName() != output_name) {
+      logger_->error(utl::DFT,
+                     22,
+                     "scan_opt requires a configured scan output {}; {} is an "
+                     "implicitly reused functional output.",
+                     output_name,
+                     (*term)->getName());
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Spatial pre-clustering: reassign scan cells between chains of the same
