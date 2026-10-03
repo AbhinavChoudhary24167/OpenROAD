@@ -68,14 +68,13 @@ odb::dbScanList* getScanList(odb::dbScanChain* chain)
 // Rewires a scan chain to match the given ordered cell list:
 //   chain.scan_in → cells[0].SI
 //   cells[i].SO   → cells[i+1].SI  for i in [0, n-2]
-//   cells[n-1].SO → chain.scan_out  (metadata only — see note below)
+//   cells[n-1].SO → chain.scan_out
 //
 // Safe to call multiple times (idempotent): connect() disconnects from the
 // old net before attaching to the new one.
 //
-// Note on scan_out: the chain-level scan_out BTerm/ITerm is typically a
-// functional Q output that must remain on its original net.  We only update
-// the chain metadata pointer (setScanOut) rather than physically moving nets.
+// Preserve the fixed scan_out endpoint and the functional fanout of each
+// cell output.  Only the endpoint load moves when the tail changes.
 void RestitchChain(odb::dbScanChain* chain,
                    const std::vector<OdbScanCellAdapter*>& cells,
                    odb::dbBlock* block,
@@ -120,10 +119,40 @@ void RestitchChain(odb::dbScanChain* chain,
     si_iterm->connect(net);
   }
 
-  // Update chain scan_out metadata to the last cell's SO ITerm.
+  // Connect the fixed scan output load to the final tail's existing net.
   odb::dbITerm* last_so = cells.back()->getScanOutITerm();
   if (last_so != nullptr) {
-    chain->setScanOut(last_so);
+    odb::dbNet* net = last_so->getNet();
+    if (net == nullptr) {
+      net = odb::dbNet::create(block, last_so->getName().c_str());
+      if (net == nullptr) {
+        logger->error(
+            utl::DFT, 15, "Failed to create net for scan_opt restitching.");
+      }
+      net->setSigType(odb::dbSigType::SCAN);
+      last_so->connect(net);
+    }
+    std::visit(
+        [&](auto&& pin) {
+          if (pin != nullptr) {
+            pin->connect(net);
+          }
+        },
+        chain->getScanOut());
+  }
+
+  // Keep ODB scan-list order consistent with the restitched physical order.
+  // insertAtFront stores the reverse of the logical scan order.
+  odb::dbScanList* list = getScanList(chain);
+  if (list != nullptr) {
+    std::map<std::string, odb::dbScanInst*> scan_insts;
+    for (odb::dbScanInst* scan_inst : list->getScanInsts()) {
+      scan_insts.emplace(scan_inst->getInst()->getName(), scan_inst);
+    }
+    list->clear();
+    for (const auto* cell : cells) {
+      scan_insts.at(std::string(cell->getName()))->insertAtFront(list);
+    }
   }
 }
 
