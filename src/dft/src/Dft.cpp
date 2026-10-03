@@ -428,7 +428,8 @@ void Dft::scanOpt()
     const auto output_name = fmt::format(
         FMT_RUNTIME(dft_config_->getScanStitchConfig().getOutNamePattern()),
         ordinal++);
-    if (auto* term = std::get_if<odb::dbBTerm*>(&chain->getScanOut());
+    const auto scan_out = chain->getScanOut();
+    if (auto* term = std::get_if<odb::dbBTerm*>(&scan_out);
         term != nullptr && *term != nullptr
         && (*term)->getName() != output_name) {
       logger_->error(utl::DFT,
